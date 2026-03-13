@@ -74,5 +74,5 @@ fun getCommitHash(): String {
     if(isCommit) return head[0].trim().take(takeFromHash)
 
     val refHead = File(gitFolder + head[1].trim())
-    return refHead.readText().trim();
+    return refHead.readText().trim().take(takeFromHash);
 }

@@ -11,9 +11,9 @@ import ac.boar.anticheat.util.LatencyUtil;
 import ac.boar.anticheat.util.MathUtil;
 import ac.boar.anticheat.util.math.Vec3;
 import ac.boar.anticheat.validator.blockbreak.ServerBreakBlockValidator;
-import ac.boar.geyser.util.GeyserUtil;
 import ac.boar.mappings.BlockMappings;
-import ac.boar.protocol.mitm.CloudburstReceiveListener;
+import ac.boar.protocol.BoarHandlerAdaptor;
+import io.netty.channel.EventLoop;
 import lombok.Getter;
 
 import ac.boar.anticheat.check.api.holder.CheckHolder;
@@ -22,9 +22,9 @@ import ac.boar.anticheat.data.FluidState;
 import ac.boar.anticheat.util.math.Box;
 import ac.boar.anticheat.util.math.Mutable;
 import ac.boar.anticheat.validator.inventory.ItemTransactionValidator;
-import ac.boar.protocol.mitm.CloudburstSendListener;
 import ac.boar.anticheat.player.data.PlayerData;
 import lombok.Setter;
+import lombok.SneakyThrows;
 import org.cloudburstmc.math.GenericMath;
 import org.cloudburstmc.math.TrigMath;
 import org.cloudburstmc.math.vector.Vector3i;
@@ -33,6 +33,7 @@ import org.cloudburstmc.protocol.bedrock.BedrockServerSession;
 import org.cloudburstmc.protocol.bedrock.data.Ability;
 import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
+import org.cloudburstmc.protocol.bedrock.netty.BedrockPacketWrapper;
 import org.cloudburstmc.protocol.bedrock.packet.NetworkStackLatencyPacket;
 import org.geysermc.geyser.api.command.CommandSource;
 import org.geysermc.geyser.entity.EntityDefinitions;
@@ -44,22 +45,21 @@ import org.geysermc.geyser.level.block.type.BlockState;
 import org.geysermc.geyser.session.GeyserSession;
 import org.geysermc.mcprotocollib.protocol.data.game.entity.Effect;
 
+import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.ThreadLocalRandom;
+import java.util.concurrent.TimeUnit;
 
 public final class BoarPlayer extends PlayerData {
     @Getter
     private final GeyserSession session;
     @Getter
     @Setter
-    private BedrockServerSession cloudburstDownstream;
-    public CloudburstSendListener cloudburstUpstream;
-    public CloudburstReceiveListener downstreamPacketHandler;
-    public RakSessionCodec rakSessionCodec;
+    private BedrockServerSession bedrockSession;
 
-    public long runtimeEntityId, javaEntityId;
+    public long runtimeEntityId;
 
     @Getter
     private final TeleportUtil teleportUtil = new TeleportUtil(this);
@@ -69,7 +69,6 @@ public final class BoarPlayer extends PlayerData {
 
     @Getter
     private final LatencyUtil latencyUtil = new LatencyUtil(this);
-    public final AtomicLong receivedStackId = new AtomicLong(-1), sentStackId = new AtomicLong(0);
 
     // Lag compensation
     public final CompensatedWorldImpl compensatedWorld = new CompensatedWorldImpl(this);
@@ -85,6 +84,7 @@ public final class BoarPlayer extends PlayerData {
     @Getter
     private final Map<UUID, CommandSource> trackedDebugPlayers = new ConcurrentHashMap<>();
 
+    @SneakyThrows
     public BoarPlayer(GeyserSession session) {
         this.session = session;
 
@@ -97,7 +97,7 @@ public final class BoarPlayer extends PlayerData {
         AIR_IDS.add(BEDROCK_AIR);
         AIR_IDS.add(mappings.getBedrockBlockId(Blocks.CAVE_AIR.defaultBlockState().javaId()));
         AIR_IDS.add(mappings.getBedrockBlockId(Blocks.VOID_AIR.defaultBlockState().javaId()));
-//
+
         for (GeyserAttributeType type : GeyserAttributeType.values()) {
             final String identifier = type.getBedrockIdentifier();
             if (identifier == null || this.attributes.containsKey(type.getBedrockIdentifier())) {
@@ -106,60 +106,45 @@ public final class BoarPlayer extends PlayerData {
 
             this.attributes.put(identifier, new AttributeInstance(type.getDefaultValue()));
         }
+
+
+        final Field field = GeyserSession.class.getDeclaredField("tickEventLoop");
+        field.setAccessible(true);
+        ((EventLoop)field.get(session)).scheduleAtFixedRate(this::serverTick, 50000000, 50000000, TimeUnit.NANOSECONDS);
+    }
+
+    public void serverTick() {
+        if (this.getLatencyUtil().sentQueue().isEmpty()) {
+            sendLatencyStack();
+            return;
+        }
+
+        if (System.currentTimeMillis() - this.getLatencyUtil().prevAcceptedTime > Boar.getConfig().maxLatencyWait()) {
+            kick("Timed out!");
+        }
     }
 
     public boolean isClosed() {
         return this.session.isClosed() || this.session.getUpstream().isClosed();
     }
 
-    public void sendLatencyStack() {
-        this.sendLatencyStack(false);
+    public void sendLatencyStack(Runnable runnable) {
+        sendLatencyStack();
+        this.latencyUtil.queue(runnable);
     }
 
-    public void sendLatencyStack(boolean immediate) {
-        if (doTimeOut()) {
-            this.kick("Timed out.");
-            return;
-        }
-//        System.out.println("Send latency: " + System.currentTimeMillis());
+    public void sendLatencyStack() {
+        long id = ThreadLocalRandom.current().nextLong(-5000000L, 5000000L);
 
-        long id = this.sentStackId.incrementAndGet();
-        if (id == -GeyserUtil.MAGIC_FORM_IMAGE_HACK_TIMESTAMP || id == -GeyserUtil.MAGIC_VIRTUAL_INVENTORY_HACK) {
-            id = this.sentStackId.incrementAndGet();
-        }
-
-        // We have to send negative values since geyser translate positive one.
         final NetworkStackLatencyPacket latencyPacket = new NetworkStackLatencyPacket();
-        latencyPacket.setTimestamp(-id);
+        latencyPacket.setTimestamp(id);
         latencyPacket.setFromServer(true);
 
-        this.latencyUtil.addLatencyToQueue(id);
+        this.bedrockSession.getPeer().getChannel().pipeline().context(BoarHandlerAdaptor.NAME).writeAndFlush(
+                BedrockPacketWrapper.create(0, 0, 0, latencyPacket, null)
+        );
 
-        if (immediate) {
-            this.getSession().sendUpstreamPacketImmediately(latencyPacket);
-        } else {
-            this.getSession().sendUpstreamPacket(latencyPacket);
-        }
-
-//        System.out.println("Sent: " + System.currentTimeMillis());
-    }
-
-    private boolean doTimeOut() {
-        if (this.sentStackId.get() - this.receivedStackId.get() < 5) {
-            return false;
-        }
-
-        if (this.latencyUtil.getNextSentTime() == this.latencyUtil.getLastSentTime()) {
-//            System.out.println("The same, skip!");
-            return false;
-        }
-
-        long latencyFault = Math.max(0, this.latencyUtil.getNextSentTime().ms() - this.latencyUtil.getLastSentTime().ms());
-        long distance = System.currentTimeMillis() - this.latencyUtil.getLastRespondTime();
-        distance -= latencyFault;
-
-//        System.out.println("Dist=" + distance + ", sentDis=" + latencyFault);
-        return distance >= Boar.getConfig().maxLatencyWait();
+        this.latencyUtil.queue(id, true);
     }
 
     public boolean isMovementExempted() {

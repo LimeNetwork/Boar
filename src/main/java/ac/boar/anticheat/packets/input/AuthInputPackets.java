@@ -3,7 +3,6 @@ package ac.boar.anticheat.packets.input;
 import ac.boar.anticheat.check.impl.reach.Reach;
 import ac.boar.anticheat.check.impl.timer.Timer;
 import ac.boar.anticheat.data.input.PredictionData;
-import ac.boar.anticheat.data.input.VelocityData;
 import ac.boar.anticheat.packets.input.legacy.LegacyAuthInputPackets;
 import ac.boar.anticheat.packets.input.teleport.TeleportHandler;
 import ac.boar.anticheat.player.BoarPlayer;
@@ -12,8 +11,8 @@ import ac.boar.anticheat.prediction.engine.data.Vector;
 import ac.boar.anticheat.teleport.data.TeleportCache;
 import ac.boar.anticheat.util.DimensionUtil;
 import ac.boar.anticheat.util.math.Vec3;
-import ac.boar.protocol.event.CloudburstPacketEvent;
-import ac.boar.protocol.listener.PacketListener;
+import ac.boar.protocol.api.CloudburstPacketEvent;
+import ac.boar.protocol.api.PacketListener;
 import org.cloudburstmc.protocol.bedrock.data.PlayerAuthInputData;
 import org.cloudburstmc.protocol.bedrock.packet.*;
 import org.geysermc.geyser.entity.EntityDefinitions;
@@ -88,31 +87,24 @@ public class AuthInputPackets extends TeleportHandler implements PacketListener 
             return;
         }
 
-        if (player.isMovementExempted()) {
-            player.setPos(player.unvalidatedPosition);
+        if (!player.getTeleportUtil().isTeleporting()) {
+            if (player.isMovementExempted()) {
+                player.setPos(player.unvalidatedPosition);
 
-            // Clear velocity out manually since we haven't handled em.
-            Iterator<Map.Entry<Long, VelocityData>> iterator = player.queuedVelocities.entrySet().iterator();
+                // Clear velocity out manually since we haven't handled em.
+                player.certainVelocity = null;
 
-            Map.Entry<Long, VelocityData> entry;
-            while (iterator.hasNext() && (entry = iterator.next()) != null) {
-                if (entry.getKey() >= player.receivedStackId.get()) {
-                    break;
-                } else {
-                    iterator.remove();
-                }
-            }
+                // This is fine, we only need tick end and use before and after to calculate ground.
+                player.predictionResult = new PredictionData(Vec3.ZERO, player.velocity.y < 0 && player.getInputData().contains(PlayerAuthInputData.VERTICAL_COLLISION) ? new Vec3(0, 1, 0) : Vec3.ZERO, player.unvalidatedTickEnd);
+                player.velocity = player.unvalidatedTickEnd.clone();
 
-            // This is fine, we only need tick end and use before and after to calculate ground.
-            player.predictionResult = new PredictionData(Vec3.ZERO, player.velocity.y < 0 && player.getInputData().contains(PlayerAuthInputData.VERTICAL_COLLISION) ? new Vec3(0, 1, 0) : Vec3.ZERO, player.unvalidatedTickEnd);
-            player.velocity = player.unvalidatedTickEnd.clone();
-
-            player.bestPossibility = Vector.NONE;
-        } else {
-            if (!player.inLoadingScreen && player.sinceLoadingScreen >= 2 || player.unvalidatedTickEnd.lengthSquared() > 0) {
-                new PredictionRunner(player).run();
+                player.bestPossibility = Vector.NONE;
             } else {
-                player.velocity = Vec3.ZERO.clone();
+                if (!player.inLoadingScreen && player.sinceLoadingScreen >= 2 || player.unvalidatedTickEnd.lengthSquared() > 0) {
+                    new PredictionRunner(player).run();
+                } else {
+                    player.velocity = Vec3.ZERO.clone();
+                }
             }
         }
 
@@ -132,16 +124,16 @@ public class AuthInputPackets extends TeleportHandler implements PacketListener 
     }
 
     @Override
-    public void onPacketSend(CloudburstPacketEvent event, boolean immediate) {
+    public void onPacketSend(CloudburstPacketEvent event) {
         final BoarPlayer player = event.getPlayer();
 
         if (event.getPacket() instanceof ChangeDimensionPacket packet) {
             int dimensionId = packet.getDimension();
             final BedrockDimension dimension = DimensionUtil.dimensionFromId(dimensionId);
 
-            player.sendLatencyStack(immediate);
-            player.getTeleportUtil().getQueuedTeleports().add(new TeleportCache.DimensionSwitch(player.sentStackId.get(), new Vec3(packet.getPosition().up(EntityDefinitions.PLAYER.offset()))));
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack();
+            player.getTeleportUtil().queue(new TeleportCache.DimensionSwitch(new Vec3(packet.getPosition().up(EntityDefinitions.PLAYER.offset()))));
+            player.getLatencyUtil().queue(() -> {
                 if (player.compensatedWorld.getDimension() != dimension) {
                     player.currentLoadingScreen = packet.getLoadingScreenId();
                     player.inLoadingScreen = true;
@@ -170,7 +162,7 @@ public class AuthInputPackets extends TeleportHandler implements PacketListener 
                 packet.setMode(MovePlayerPacket.Mode.TELEPORT);
             }
 
-            player.getTeleportUtil().queueTeleport(new Vec3(packet.getPosition()), immediate);
+            player.getTeleportUtil().queueTeleport(new Vec3(packet.getPosition()));
         }
     }
 }

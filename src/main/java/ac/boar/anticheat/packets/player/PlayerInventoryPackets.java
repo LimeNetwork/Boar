@@ -5,8 +5,8 @@ import ac.boar.anticheat.compensated.cache.container.ContainerCache;
 import ac.boar.anticheat.compensated.cache.container.impl.TradeContainerCache;
 import ac.boar.anticheat.data.inventory.ItemCache;
 import ac.boar.anticheat.player.BoarPlayer;
-import ac.boar.protocol.event.CloudburstPacketEvent;
-import ac.boar.protocol.listener.PacketListener;
+import ac.boar.protocol.api.CloudburstPacketEvent;
+import ac.boar.protocol.api.PacketListener;
 import org.cloudburstmc.math.vector.Vector3i;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerId;
 import org.cloudburstmc.protocol.bedrock.data.inventory.ContainerType;
@@ -74,12 +74,12 @@ public class PlayerInventoryPackets implements PacketListener {
     }
 
     @Override
-    public void onPacketSend(final CloudburstPacketEvent event, final boolean immediate) {
+    public void onPacketSend(final CloudburstPacketEvent event) {
         final BoarPlayer player = event.getPlayer();
         final CompensatedInventory inventory = player.compensatedInventory;
 
         if (event.getPacket() instanceof CreativeContentPacket packet) {
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.getLatencyUtil().queue(() -> {
                 inventory.getCreativeData().clear();
 
                 for (final CreativeItemData data : packet.getContents()) {
@@ -89,7 +89,7 @@ public class PlayerInventoryPackets implements PacketListener {
         }
 
         if (event.getPacket() instanceof CraftingDataPacket packet) {
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.getLatencyUtil().queue(() -> {
                 inventory.getCraftingData().clear();
 
                 for (final RecipeData data : packet.getCraftingData()) {
@@ -126,8 +126,8 @@ public class PlayerInventoryPackets implements PacketListener {
 
         if (event.getPacket() instanceof ContainerOpenPacket packet) {
             // System.out.println(packet);
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack();
+            player.getLatencyUtil().queue(() -> {
                 final ContainerCache container = inventory.getContainer(packet.getId());
                 inventory.openContainer = Objects.requireNonNullElseGet(container, () -> new ContainerCache(inventory, packet.getId(), packet.getType(), packet.getBlockPosition(), packet.getUniqueEntityId()));
             });
@@ -135,7 +135,7 @@ public class PlayerInventoryPackets implements PacketListener {
 //
         if (event.getPacket() instanceof UpdateEquipPacket packet) {
 //            System.out.println(packet);
-//            player.sendLatencyStack(immediate);
+//            player.sendLatencyStack();
 //            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> { try {
 //                inventory.openContainer = new ContainerCache((byte) packet.getWindowId(),
 //                        ContainerType.from(packet.getWindowType()), Vector3i.ZERO, packet.getUniqueEntityId());
@@ -147,16 +147,17 @@ public class PlayerInventoryPackets implements PacketListener {
                 return;
             }
 
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> { try {
-                inventory.openContainer = new TradeContainerCache(inventory, packet.getOffers(),
+            player.sendLatencyStack(() -> {
+                try {
+                    inventory.openContainer = new TradeContainerCache(inventory, packet.getOffers(),
                         (byte) packet.getContainerId(), packet.getContainerType(), Vector3i.ZERO, packet.getTraderUniqueEntityId());
-            } catch (Exception ignored) {}});
+                } catch (Exception ignored) {
+                }
+            });
         }
 
         if (event.getPacket() instanceof InventorySlotPacket packet) {
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack(() -> {
                 // Bundle should be handled separately.
                 if (packet.getContainerId() == 125) {
                     final ItemCache cache;
@@ -188,8 +189,8 @@ public class PlayerInventoryPackets implements PacketListener {
         }
 
         if (event.getPacket() instanceof InventoryContentPacket packet) {
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack();
+            player.sendLatencyStack(() -> {
                 // Bundle should be handled separately.
                 if (packet.getContainerId() == 125) {
                     final ItemCache cache;
@@ -234,8 +235,7 @@ public class PlayerInventoryPackets implements PacketListener {
 
             final int slot = packet.getSelectedHotbarSlot();
             if (slot >= 0 && slot < 9) {
-                player.sendLatencyStack();
-                player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> inventory.heldItemSlot = slot);
+                player.sendLatencyStack(() -> inventory.heldItemSlot = slot);
             }
         }
     }

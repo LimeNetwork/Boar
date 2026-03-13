@@ -3,8 +3,8 @@ package ac.boar.anticheat.packets.server;
 import ac.boar.anticheat.compensated.cache.entity.EntityCache;
 import ac.boar.anticheat.player.BoarPlayer;
 import ac.boar.anticheat.util.math.Vec3;
-import ac.boar.protocol.event.CloudburstPacketEvent;
-import ac.boar.protocol.listener.PacketListener;
+import ac.boar.protocol.api.CloudburstPacketEvent;
+import ac.boar.protocol.api.PacketListener;
 import org.cloudburstmc.math.vector.Vector3f;
 import org.cloudburstmc.protocol.bedrock.packet.*;
 
@@ -12,11 +12,11 @@ import java.util.Set;
 
 public class ServerEntityPackets implements PacketListener {
     @Override
-    public void onPacketSend(final CloudburstPacketEvent event, final boolean immediate) {
+    public void onPacketSend(final CloudburstPacketEvent event) {
         final BoarPlayer player = event.getPlayer();
         if (event.getPacket() instanceof RemoveEntityPacket packet) {
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack();
+            player.sendLatencyStack(() -> {
                 if (player.vehicleData != null && player.vehicleData.vehicleRuntimeId == packet.getUniqueEntityId()) {
                     player.vehicleData = null;
                 }
@@ -119,17 +119,7 @@ public class ServerEntityPackets implements PacketListener {
         // But if player respond to the transaction AFTER the position packet they 100% already receive the packet.
         player.sendLatencyStack();
 
-        final long id = player.sentStackId.get();
-        player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
-            entity.interpolate(position, lerp && distance < 4096);
-            // Bukkit.broadcastMessage("Player received position=" + position + ", id=" + id);
-        });
-
-        // Bukkit.broadcastMessage("New position=" + position + ", id=" + player.sentStackId.get());
-
-        event.getPostTasks().add(() -> {
-            player.sendLatencyStack();
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> entity.setPast(null));
-        });
+        player.getLatencyUtil().queue(() -> entity.interpolate(position, lerp && distance < 4096));
+        event.getPostTasks().add(() -> player.sendLatencyStack(() -> entity.setPast(null)));
     }
 }

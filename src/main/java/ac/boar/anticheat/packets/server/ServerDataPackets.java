@@ -1,16 +1,16 @@
 package ac.boar.anticheat.packets.server;
 
+import ac.boar.anticheat.Boar;
 import ac.boar.anticheat.compensated.cache.container.ContainerCache;
 import ac.boar.anticheat.compensated.cache.entity.EntityCache;
 import ac.boar.anticheat.data.EntityDimensions;
 import ac.boar.anticheat.data.vanilla.AttributeInstance;
 import ac.boar.anticheat.player.BoarPlayer;
-import ac.boar.protocol.event.CloudburstPacketEvent;
-import ac.boar.protocol.listener.PacketListener;
-import org.cloudburstmc.protocol.bedrock.data.Ability;
-import org.cloudburstmc.protocol.bedrock.data.AbilityLayer;
-import org.cloudburstmc.protocol.bedrock.data.AttributeData;
-import org.cloudburstmc.protocol.bedrock.data.GameType;
+import ac.boar.anticheat.util.DimensionUtil;
+import ac.boar.anticheat.validator.blockbreak.ServerBreakBlockValidator;
+import ac.boar.protocol.api.CloudburstPacketEvent;
+import ac.boar.protocol.api.PacketListener;
+import org.cloudburstmc.protocol.bedrock.data.*;
 import org.cloudburstmc.protocol.bedrock.data.attribute.AttributeModifierData;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityDataTypes;
 import org.cloudburstmc.protocol.bedrock.data.entity.EntityFlag;
@@ -24,12 +24,26 @@ import java.util.Set;
 
 public class ServerDataPackets implements PacketListener {
     @Override
-    public void onPacketSend(final CloudburstPacketEvent event, final boolean immediate) {
+    public void onPacketSend(final CloudburstPacketEvent event) {
         final BoarPlayer player = event.getPlayer();
 
+        if (event.getPacket() instanceof StartGamePacket start) {
+            player.runtimeEntityId = start.getRuntimeEntityId();
+
+            player.compensatedWorld.setDimension(DimensionUtil.dimensionFromId(start.getDimensionId()));
+            player.currentLoadingScreen = null;
+            player.inLoadingScreen = true;
+
+            // We need this to do rewind teleport.
+            start.setAuthoritativeMovementMode(AuthoritativeMovementMode.SERVER_WITH_REWIND);
+            start.setRewindHistorySize(Boar.getConfig().rewindHistory());
+            player.serverBreakBlockValidator = new ServerBreakBlockValidator(player);
+
+            player.sendLatencyStack(() -> player.gameType = start.getPlayerGameType());
+        }
+
         if (event.getPacket() instanceof SetPlayerGameTypePacket packet) {
-            player.sendLatencyStack();
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> player.gameType = GameType.from(packet.getGamemode()));
+            player.sendLatencyStack(() -> player.gameType = GameType.from(packet.getGamemode()));
         }
 
         if (event.getPacket() instanceof UpdateAbilitiesPacket packet) {
@@ -37,15 +51,14 @@ public class ServerDataPackets implements PacketListener {
                 return;
             }
 
-            event.getPostTasks().add(() -> player.sendLatencyStack(immediate));
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get() + 1, () -> {
+            event.getPostTasks().add(() -> player.sendLatencyStack(() -> {
                 player.abilities.clear();
                 for (AbilityLayer layer : packet.getAbilityLayers()) {
                     player.abilities.addAll(layer.getAbilityValues());
                 }
 
                 player.getFlagTracker().setFlying(player.abilities.contains(Ability.FLYING) || player.abilities.contains(Ability.MAY_FLY) && player.getFlagTracker().isFlying());
-            });
+            }));
         }
 
         if (event.getPacket() instanceof SetEntityDataPacket packet) {
@@ -57,7 +70,7 @@ public class ServerDataPackets implements PacketListener {
 
                 // No need to send latency, we only use a few's metadata values from them and most of them almost never actually changed so we should be good,
                 // for eg: (COLLIDEABLE flag is always true for certain entity regardless of what).
-                player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> cache.setMetadata(packet.getMetadata()));
+                player.getLatencyUtil().queue(() -> cache.setMetadata(packet.getMetadata()));
                 return;
             }
 
@@ -86,11 +99,11 @@ public class ServerDataPackets implements PacketListener {
                 flagsCopy = null;
             }
 
-            player.sendLatencyStack(immediate);
+            player.sendLatencyStack();
 
-            final long id = player.sentStackId.get();
-            player.desyncedFlag.set(flagsCopy != null ? id : -1);
-            player.getLatencyUtil().addTaskToQueue(id, () -> {
+//            final long id = player.sentStackId.get();
+//            player.desyncedFlag.set(flagsCopy != null ? id : -1);
+            player.getLatencyUtil().queue(() -> {
                 if (flagsCopy != null) {
                     player.getFlagTracker().set(player, flagsCopy);
                 }
@@ -122,9 +135,9 @@ public class ServerDataPackets implements PacketListener {
                     player.dimensions = player.dimensions.hardScaled(scale);
                 }
 
-                if (player.desyncedFlag.get() == id) {
-                    player.desyncedFlag.set(-1);
-                }
+//                if (player.desyncedFlag.get() == id) {
+//                    player.desyncedFlag.set(-1);
+//                }
             });
         }
 
@@ -133,8 +146,7 @@ public class ServerDataPackets implements PacketListener {
                 return;
             }
 
-            player.sendLatencyStack(immediate);
-            player.getLatencyUtil().addTaskToQueue(player.sentStackId.get(), () -> {
+            player.sendLatencyStack(() -> {
                 if (player.vehicleData != null) {
                     return;
                 }
@@ -170,7 +182,7 @@ public class ServerDataPackets implements PacketListener {
                 final SessionPlayerEntity entity = player.getSession().getPlayerEntity();
 
                 UpdateAttributesPacket attributesPacket = new UpdateAttributesPacket();
-                attributesPacket.setRuntimeEntityId(entity.getGeyserId());
+                attributesPacket.setRuntimeEntityId(entity.geyserId());
                 attributesPacket.getAttributes().addAll(entity.getAttributes().values());
                 player.getSession().sendUpstreamPacket(attributesPacket);
 

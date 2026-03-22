@@ -42,7 +42,7 @@ public class BoarHandlerAdaptor extends MessageToMessageCodec<BedrockPacketWrapp
 
         ByteBuf buf = ctx.alloc().buffer(128);
         try {
-            BedrockPacket packet = msg.getPacket();
+            BedrockPacket packet = event.getPacket();
             msg.setPacketId(this.codec.getPacketId(packet));
             this.codec.encodeHeader(buf, msg);
             this.codec.getCodec().tryEncode(this.codec.getHelper(), buf, packet);

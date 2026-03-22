@@ -138,13 +138,12 @@ public final class BoarPlayer extends PlayerData {
 
         final NetworkStackLatencyPacket latencyPacket = new NetworkStackLatencyPacket();
         latencyPacket.setTimestamp(id);
-        latencyPacket.setFromServer(true);
+        latencyPacket.setFromServer(false); // hack to distinguish from Geyser packet and ours.
 
-        this.bedrockSession.getPeer().getChannel().pipeline().context(BoarHandlerAdaptor.NAME).writeAndFlush(
-                BedrockPacketWrapper.create(0, 0, 0, latencyPacket, null)
-        );
-
-        this.latencyUtil.queue(id, true);
+        this.session.sendUpstreamPacketImmediately(latencyPacket);
+//        this.bedrockSession.getPeer().getChannel().pipeline().context(BoarHandlerAdaptor.NAME).writeAndFlush(
+//                BedrockPacketWrapper.create(0, 0, 0, latencyPacket, null)
+//        );
     }
 
     public boolean isMovementExempted() {

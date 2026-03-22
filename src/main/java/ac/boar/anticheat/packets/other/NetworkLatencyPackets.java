@@ -17,7 +17,8 @@ public class NetworkLatencyPackets implements PacketListener {
             return;
         }
 
-        event.getPlayer().getLatencyUtil().queue(packet.getTimestamp(), false);
+        event.getPlayer().getLatencyUtil().queue(packet.getTimestamp(), !packet.isFromServer());
+        packet.setFromServer(true);
     }
 
     @Override

@@ -49,6 +49,7 @@ import java.lang.reflect.Field;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
@@ -84,6 +85,8 @@ public final class BoarPlayer extends PlayerData {
     @Getter
     private final Map<UUID, CommandSource> trackedDebugPlayers = new ConcurrentHashMap<>();
 
+    public ScheduledFuture<?> future;
+
     @SneakyThrows
     public BoarPlayer(GeyserSession session) {
         this.session = session;
@@ -110,7 +113,7 @@ public final class BoarPlayer extends PlayerData {
 
         final Field field = GeyserSession.class.getDeclaredField("tickEventLoop");
         field.setAccessible(true);
-        ((EventLoop)field.get(session)).scheduleAtFixedRate(this::serverTick, 50000000, 50000000, TimeUnit.NANOSECONDS);
+        future = ((EventLoop)field.get(session)).scheduleAtFixedRate(this::serverTick, 50000000, 50000000, TimeUnit.NANOSECONDS);
     }
 
     public void serverTick() {

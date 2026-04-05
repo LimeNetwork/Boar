@@ -43,6 +43,10 @@ public class GeyserBoar implements Extension {
             return;
         }
 
+        if (player.future != null) {
+            player.future.cancel(false);
+        }
+
         nameToSessions.remove(event.connection().bedrockUsername());
     }
 
